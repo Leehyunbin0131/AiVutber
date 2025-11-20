@@ -1,115 +1,127 @@
-# Discord Real-time STT Bot (High Performance)
+# 🎙️ Discord Real-time STT Bot (High Performance)
 
-This project is a high-performance Discord bot that performs real-time Speech-to-Text (STT) on user audio in voice channels. It uses **Faster-Whisper** for transcription and **Silero VAD** for voice activity detection, running in a separate process to ensure low latency and stability.
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=for-the-badge&logo=python&logoColor=white)
+![Discord.py](https://img.shields.io/badge/Discord.py-2.0%2B-5865F2?style=for-the-badge&logo=discord&logoColor=white)
+![Faster-Whisper](https://img.shields.io/badge/Faster--Whisper-Large--v3-success?style=for-the-badge)
+![Silero VAD](https://img.shields.io/badge/Silero%20VAD-High%20Accuracy-orange?style=for-the-badge)
 
-## Key Features
+> **The Ultimate Low-Latency Speech-to-Text Solution for Discord.**
+> Built for speed, accuracy, and stability using a multi-process architecture.
 
--   **Real-time Transcription**: Uses `faster-whisper` (large-v3-turbo) for high accuracy and speed.
--   **Low Latency**: Optimized pipeline with Ring Buffers and aggressive VAD settings (~0.2s latency).
--   **Multi-User Support**: Handles multiple users speaking simultaneously without mixing audio.
--   **Robust Architecture**:
-    -   **Multiprocessing**: STT engine runs in a separate process to prevent bot freezing.
-    -   **Auto Cleanup**: Automatically clears memory for inactive users to prevent leaks.
-    -   **Token Security**: Uses `.env` for secure token management.
--   **Korean Optimized**: Configured specifically for Korean language transcription.
+---
 
-## Installation
+## ⚡ Why This Project?
+
+This is not just another Discord bot. It is a **highly optimized engineering solution** designed to solve the common pitfalls of real-time audio processing: **Latency**, **Freezing**, and **Accuracy**.
+
+Most bots fail because they run heavy AI models on the same thread as the Discord heartbeat, causing "Application did not respond" errors. We solved this with a **Process-Isolated Architecture**.
+
+### 🚀 Key Engineering Highlights
+
+-   **Multiprocessing Core**: The STT engine runs in a completely separate process, communicating via IPC Queues. The bot *never* freezes, even under heavy load.
+-   **Zero-Latency Feel**:
+    -   **Ring Buffer Technology**: Captures 300ms of pre-speech context so the first syllable is never cut off.
+    -   **Silero VAD**: State-of-the-art Voice Activity Detection filters out breathing and keyboard clicks instantly.
+    -   **Faster-Whisper**: Uses CTranslate2-powered Whisper for 4x faster inference than standard OpenAI Whisper.
+-   **Memory Safe**: Implements an **Auto-Cleanup Garbage Collector** that aggressively frees memory for inactive users.
+
+---
+
+## 🛠️ Architecture
+
+This project uses a sophisticated pipeline to handle audio streams.
+
+```mermaid
+graph TD
+    subgraph "Main Process (Discord Bot)"
+        A[Discord Gateway] -->|Opus Audio| B(AudioSink)
+        B -->|PCM 48kHz| C{Resampler}
+        C -->|PCM 16kHz Mono| D[IPC Audio Queue]
+        H[IPC Result Queue] -->|JSON| I[Message Sender]
+    end
+
+    subgraph "STT Process (Isolated)"
+        D --> E[Ring Buffer]
+        E -->|Frame| F{Silero VAD}
+        F -- Speech Detected --> G[Accumulator]
+        F -- Silence --> G
+        G -- End of Speech --> J[Faster-Whisper Model]
+        J -->|Text| H
+    end
+```
+
+---
+
+## 📦 Installation
 
 ### Prerequisites
--   Python 3.10+
--   NVIDIA GPU (Recommended) with CUDA installed.
--   [FFmpeg](https://ffmpeg.org/download.html) (Required for audio processing).
+-   **Python 3.10+**
+-   **NVIDIA GPU** (Highly Recommended for <0.5s latency)
+-   **FFmpeg** (Required for audio processing)
 
-### Setup
-1.  **Clone the repository**:
-    ```bash
-    git clone <repository_url>
-    cd <repository_name>
-    ```
-
-2.  **Install Dependencies**:
-    ```bash
-    pip install -r requirements.txt
-    ```
-    *Note: This will install `torch`, `torchaudio`, and `faster-whisper` which are large packages.*
-
-3.  **Configure Environment**:
-    -   Create a `.env` file in the root directory.
-    -   Add your Discord Bot Token:
-        ```env
-        DISCORD_TOKEN=your_discord_bot_token_here
-        ```
-
-4.  **Run the Bot**:
-    ```bash
-    python bot.py
-    ```
-
-## Usage Guide
-
-1.  **Invite the Bot**: Invite the bot to your server using the OAuth2 URL generated from the Discord Developer Portal.
-2.  **Join Voice Channel**: Join a voice channel.
-3.  **Summon Bot**: Type `!join` in a text channel. The bot will join your voice channel and start listening.
-4.  **Speak**: Speak naturally. The bot will print the transcription to the console (JSON format).
-5.  **Leave**: Type `!leave` to disconnect the bot.
-
-## Configuration (`config.py`)
-
-All adjustable settings are located in `config.py`. You can modify these values to customize the bot's behavior.
-
-### STT Settings
--   `STT_MODEL_ID`: The Whisper model to use (e.g., `deepdml/faster-whisper-large-v3-turbo-ct2`, `base`, `small`).
--   `STT_DEVICE`: `cuda` (GPU) or `cpu`.
--   `STT_COMPUTE_TYPE`: `float16` (GPU) or `int8` (CPU).
--   `STT_BEAM_SIZE`: Beam size for decoding. Lower (1) is faster, higher (5) is more accurate.
-
-### VAD Settings (Voice Activity Detection)
--   `FRAME_DURATION_MS`: Frame size for VAD (Default: 32ms for Silero).
--   `RING_BUFFER_SIZE`: Number of frames to keep as context before speech (Pre-recording buffer). Increase this if the first syllable is being cut off.
-
-### Cleanup
--   `USER_TIMEOUT_SECONDS`: Time in seconds before an inactive user's buffer is cleared from memory.
-
-## Technical Architecture
-
-### Pipeline
-1.  **Audio Receiving (`bot.py`)**:
-    -   Receives 48kHz Stereo PCM audio from Discord.
-    -   Converts to 16kHz Mono PCM (required by models).
-    -   Pushes audio chunks to a `multiprocessing.Queue`.
-
-2.  **STT Processing (`stt_handler.py`)**:
-    -   Runs in a separate **Process** to avoid blocking the Discord gateway heartbeat.
-    -   **Ring Buffer**: Stores recent audio frames to provide context.
-    -   **Silero VAD**: Detects voice activity with high accuracy.
-    -   **Accumulation**: Buffers audio while the user is speaking.
-    -   **Transcription**: When silence is detected, the accumulated audio is sent to `Faster-Whisper`.
-
-3.  **Output**:
-    -   Transcription results are sent back to the main process via a `result_queue`.
-    -   The main process prints the result as JSON.
-
-### Directory Structure
+### 1. Clone & Install
+```bash
+git clone https://github.com/your-repo/discord-stt-bot.git
+cd discord-stt-bot
+pip install -r requirements.txt
 ```
-.
-├── bot.py              # Main Discord bot entry point
-├── stt_handler.py      # STT processing logic (Separate Process)
-├── config.py           # Configuration file
-├── requirements.txt    # Python dependencies
-├── .env                # Environment variables (Token)
-└── README.md           # Documentation
+> *Note: This installs `torch` and `faster-whisper`. The total size may exceed 2GB.*
+
+### 2. Configuration
+Create a `.env` file in the root directory:
+```env
+DISCORD_TOKEN=your_super_secret_token_here
 ```
 
-## Customization
-
-### Changing the Model
-To use a different model (e.g., English only or a smaller model), edit `config.py`:
-```python
-STT_MODEL_ID = "base.en" # For English base model
-STT_LANGUAGE = "en"
+### 3. Run
+```bash
+python bot.py
 ```
 
-### Adjusting Sensitivity
-If the bot cuts off too early or picks up too much noise, adjust `config.py`:
--   **VAD Threshold**: Silero VAD is pre-tuned, but you can adjust `RING_BUFFER_SIZE` to capture more context.
--   **Silence Duration**: Currently hardcoded logic in `stt_handler.py` determines end-of-speech. You can modify the logic in `run_stt_process` to wait for more silence frames.
+---
+
+## ⚙️ Configuration (`config.py`)
+
+We believe in **Configuration as Code**. All magic numbers are exposed in `config.py` for fine-tuning.
+
+| Category | Variable | Default | Description |
+| :--- | :--- | :--- | :--- |
+| **STT** | `STT_MODEL_ID` | `deepdml/faster-whisper...` | The HuggingFace model ID. |
+| | `STT_DEVICE` | `cuda` | Use `cpu` if you don't have a GPU. |
+| | `STT_BEAM_SIZE` | `1` | Lower is faster. Higher is more accurate. |
+| **VAD** | `RING_BUFFER_SIZE` | `10` | Pre-speech context buffer (10 frames ≈ 320ms). |
+| | `FRAME_DURATION_MS` | `32` | Frame size for Silero VAD (Do not change). |
+| **System** | `USER_TIMEOUT_SECONDS` | `60` | Seconds before clearing inactive user memory. |
+
+---
+
+## 🖥️ Usage
+
+1.  **Summon**: Type `!join` in any text channel.
+2.  **Speak**: Just talk. The bot listens to everyone simultaneously.
+3.  **Dismiss**: Type `!leave` to save resources.
+
+---
+
+## 🧩 Troubleshooting
+
+**Q: The bot joins but doesn't transcribe.**
+> **A:** Check your console. If you see `Silero VAD loaded`, wait for the model to download. Also, ensure the user has permission to speak.
+
+**Q: It's too slow!**
+> **A:** Ensure `STT_DEVICE` is set to `cuda` in `config.py`. Running `large-v3` on CPU is not recommended. Switch to `base` or `small` for CPU usage.
+
+**Q: "Input audio chunk is too short" error?**
+> **A:** This was a known issue with Silero VAD frame sizes. We have fixed it by enforcing a **512-sample (32ms)** frame size in the code.
+
+---
+
+## 📜 License
+
+This project is licensed under the MIT License. Feel free to fork, modify, and use it in your own projects.
+
+---
+
+<div align="center">
+  <sub>Built with ❤️ by <b>Antigravity</b> for the Open Source Community.</sub>
+</div>
