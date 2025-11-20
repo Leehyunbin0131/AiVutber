@@ -8,16 +8,15 @@ import multiprocessing
 import queue
 from stt_handler import run_stt_process
 import datetime
-from dotenv import load_dotenv
+import config
 
-# Load environment variables
-load_dotenv()
-TOKEN = os.getenv("DISCORD_TOKEN")
+# Token
+TOKEN = config.DISCORD_TOKEN
 
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix=config.COMMAND_PREFIX, intents=intents)
 
 # Global Queues
 audio_queue = None
