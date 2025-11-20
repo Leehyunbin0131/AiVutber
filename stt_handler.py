@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import psutil
 import os
+import config
 
 def run_stt_process(audio_queue, result_queue, command_queue):
     """
@@ -17,9 +18,7 @@ def run_stt_process(audio_queue, result_queue, command_queue):
     print("Loading Faster-Whisper model...")
     try:
         from faster_whisper import WhisperModel
-        # Use 'large-v3-turbo' as requested previously, or fallback to base if too heavy
-        model_id = "deepdml/faster-whisper-large-v3-turbo-ct2"
-        model = WhisperModel(model_id, device="cuda", compute_type="float16")
+        model = WhisperModel(config.STT_MODEL_ID, device=config.STT_DEVICE, compute_type=config.STT_COMPUTE_TYPE)
         print("Faster-Whisper loaded on GPU.")
     except Exception as e:
         print(f"Failed to load GPU model: {e}. Fallback to CPU base.")
@@ -29,8 +28,8 @@ def run_stt_process(audio_queue, result_queue, command_queue):
     print("Loading Silero VAD...")
     try:
         # Load Silero VAD from torch hub
-        vad_model, utils = torch.hub.load(repo_or_dir='snakers4/silero-vad',
-                                          model='silero_vad',
+        vad_model, utils = torch.hub.load(repo_or_dir=config.VAD_REPO_OR_DIR,
+                                          model=config.VAD_MODEL,
                                           force_reload=False,
                                           trust_repo=True)
         (get_speech_timestamps, save_audio, read_audio, VADIterator, collect_chunks) = utils
@@ -44,17 +43,6 @@ def run_stt_process(audio_queue, result_queue, command_queue):
     user_speech_buffers = {} # user_id -> bytearray (accumulated speech)
     user_ring_buffers = {} # user_id -> deque (pre-speech context)
     user_last_activity = {} # user_id -> timestamp
-    
-    # Constants
-    SAMPLE_RATE = 16000
-    # Silero VAD requires 512, 1024, 1536 samples for 16kHz
-    # 512 samples / 16000Hz = 0.032s = 32ms
-    FRAME_SIZE_SAMPLES = 512
-    FRAME_SIZE_BYTES = FRAME_SIZE_SAMPLES * 2 # 1024 bytes
-    RING_BUFFER_SIZE = 10 # ~320ms context
-    
-    # Cleanup Config
-    USER_TIMEOUT_SECONDS = 60
     
     # VAD Iterator per user
     user_vad_iterators = {} 
@@ -94,34 +82,24 @@ def run_stt_process(audio_queue, result_queue, command_queue):
             if user_id not in user_buffers:
                 user_buffers[user_id] = bytearray()
                 user_speech_buffers[user_id] = bytearray()
-                user_ring_buffers[user_id] = collections.deque(maxlen=RING_BUFFER_SIZE)
+                user_ring_buffers[user_id] = collections.deque(maxlen=config.RING_BUFFER_SIZE)
                 user_vad_iterators[user_id] = VADIterator(vad_model)
             
             user_buffers[user_id].extend(pcm_data)
             
-            # Process in 512 sample chunks (1024 bytes)
-            while len(user_buffers[user_id]) >= FRAME_SIZE_BYTES:
-                frame = user_buffers[user_id][:FRAME_SIZE_BYTES]
-                del user_buffers[user_id][:FRAME_SIZE_BYTES]
+            # Process in chunks
+            while len(user_buffers[user_id]) >= config.FRAME_SIZE_BYTES:
+                frame = user_buffers[user_id][:config.FRAME_SIZE_BYTES]
+                del user_buffers[user_id][:config.FRAME_SIZE_BYTES]
                 
                 # Convert frame to tensor for Silero
-                # Silero expects float32 tensor, normalized to [-1, 1]
                 frame_np = np.frombuffer(frame, dtype=np.int16).astype(np.float32) / 32768.0
                 frame_tensor = torch.from_numpy(frame_np)
                 
                 # Get speech probability
-                # VADIterator handles state and thresholding internally
                 speech_dict = user_vad_iterators[user_id](frame_tensor, return_seconds=True)
                 
                 is_speech = False
-                if speech_dict:
-                    if 'start' in speech_dict:
-                        # Speech started
-                        pass
-                    if 'end' in speech_dict:
-                        # Speech ended
-                        pass
-                
                 # Check current state
                 if user_vad_iterators[user_id].triggered:
                     is_speech = True
@@ -157,7 +135,7 @@ def run_stt_process(audio_queue, result_queue, command_queue):
         current_time = time.time()
         users_to_remove = []
         for uid, last_time in user_last_activity.items():
-            if current_time - last_time > USER_TIMEOUT_SECONDS:
+            if current_time - last_time > config.USER_TIMEOUT_SECONDS:
                 users_to_remove.append(uid)
         
         for uid in users_to_remove:
@@ -177,7 +155,7 @@ def transcribe_and_send(model, user_id, audio_data, result_queue):
     
     start_time = time.time()
     try:
-        segments, info = model.transcribe(data_f32, language="ko", beam_size=1)
+        segments, info = model.transcribe(data_f32, language=config.STT_LANGUAGE, beam_size=config.STT_BEAM_SIZE)
         text = ""
         for segment in segments:
             text += segment.text
